@@ -1,0 +1,38 @@
+[project]
+name = "ree-final"
+version = "0.1.0"
+description = "REE FINAL - Resume Depth Evaluation Engine"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "pyodbc>=5.1",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "httpx>=0.27",
+    "faiss-cpu>=1.9",
+    "numpy>=1.26",
+    "pdfplumber>=0.11",
+    "rapidfuzz>=3.10",
+    "python-dotenv>=1.0",
+    "python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

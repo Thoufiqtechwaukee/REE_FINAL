@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+storage/resumes/*
+!storage/resumes/.gitkeep
+storage/faiss/*
+!storage/faiss/.gitkeep
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+*.log
