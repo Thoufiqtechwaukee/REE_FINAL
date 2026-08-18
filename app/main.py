@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -10,8 +12,24 @@ from app.api.routes import skills as skills_routes
 from app.core.logging import configure_logging
 
 configure_logging()
+logger = logging.getLogger("app.main")
 
-app = FastAPI(title="REE FINAL - Resume Depth Evaluation Engine")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        import app.db.models  # Register all models
+        from app.db.base import Base
+        from app.db.session import engine
+
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables initialized successfully.")
+    except Exception as exc:
+        logger.warning(f"Database auto-init warning: {exc}")
+    yield
+
+
+app = FastAPI(title="REE FINAL - Resume Depth Evaluation Engine", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

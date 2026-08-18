@@ -1,6 +1,6 @@
 -- ========================================================
 -- REE FINAL: Supabase PostgreSQL Schema & Complete Seed Data
--- Enables pgvector, creates 13 core tables, and seeds 400+ skills & 200+ roles
+-- Matches exact SQLAlchemy ORM models and enables pgvector RAG
 -- ========================================================
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -94,84 +94,192 @@ CREATE TABLE IF NOT EXISTS role_skill_relations (
     relation_type VARCHAR(30) DEFAULT 'RELATED' NOT NULL
 );
 
--- 10. Resumes
+-- 10. Resumes (Matching app/db/models/resume.py)
 CREATE TABLE IF NOT EXISTS resumes (
-    resume_id VARCHAR(36) PRIMARY KEY,
-    filename VARCHAR(255) NOT NULL,
-    file_path VARCHAR(500) NOT NULL,
-    file_size_bytes INT NOT NULL,
-    pdf_sha256 VARCHAR(64) UNIQUE NOT NULL,
-    num_pages INT NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    filename VARCHAR(400) NOT NULL,
+    pdf_hash VARCHAR(64) NOT NULL,
+    storage_path VARCHAR(500) NOT NULL,
+    status VARCHAR(40) NOT NULL DEFAULT 'UPLOADED',
+    page_count INT DEFAULT 0 NOT NULL,
+    failed_stage VARCHAR(60),
+    failure_reason TEXT,
+    uploaded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+-- 11. Resume Extractions
+CREATE TABLE IF NOT EXISTS resume_extractions (
+    id SERIAL PRIMARY KEY,
+    resume_id VARCHAR(36) NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
     raw_text TEXT NOT NULL,
-    extraction_metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
-    anonymized_candidate_id VARCHAR(36) NOT NULL,
+    normalized_text TEXT NOT NULL,
+    blocks JSONB NOT NULL DEFAULT '[]'::jsonb,
+    reading_order JSONB NOT NULL DEFAULT '[]'::jsonb,
+    extraction_version VARCHAR(30) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
--- 11. Resume Chunks
+-- 12. Resume Sections
+CREATE TABLE IF NOT EXISTS resume_sections (
+    id SERIAL PRIMARY KEY,
+    resume_id VARCHAR(36) NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+    canonical_section VARCHAR(20) NOT NULL,
+    confidence FLOAT NOT NULL,
+    page_number INT NOT NULL,
+    sequence INT NOT NULL,
+    block_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    text TEXT NOT NULL
+);
+
+-- 13. Resume Chunks
 CREATE TABLE IF NOT EXISTS resume_chunks (
     chunk_id VARCHAR(36) PRIMARY KEY,
-    resume_id VARCHAR(36) NOT NULL REFERENCES resumes(resume_id) ON DELETE CASCADE,
-    chunk_index INT NOT NULL,
-    chunk_type VARCHAR(50) NOT NULL,
-    section_name VARCHAR(100) NOT NULL,
-    text_content TEXT NOT NULL,
-    contextualized_text TEXT,
-    token_count INT NOT NULL,
-    start_char INT DEFAULT 0 NOT NULL,
-    end_char INT DEFAULT 0 NOT NULL,
-    company_name VARCHAR(150),
-    role_title VARCHAR(150),
-    start_date VARCHAR(20),
-    end_date VARCHAR(20),
+    resume_id VARCHAR(36) NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+    chunk_type VARCHAR(30) NOT NULL,
+    section VARCHAR(20) NOT NULL,
+    company VARCHAR(200),
+    role_raw VARCHAR(200),
+    role_canonical_id VARCHAR(100) REFERENCES roles(role_id) ON DELETE SET NULL,
+    start_date DATE,
+    end_date DATE,
     is_current BOOLEAN DEFAULT FALSE NOT NULL,
-    entry_index INT,
+    page_number INT NOT NULL,
+    parent_chunk_id VARCHAR(36) REFERENCES resume_chunks(chunk_id),
+    sequence INT NOT NULL,
+    original_text TEXT NOT NULL,
+    embedding_text TEXT NOT NULL,
     vector_id BIGINT,
+    embedding_model VARCHAR(60),
+    embedding_version VARCHAR(30),
+    embedding_dimension INT,
     embedding vector(768),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
--- 12. Evaluations
-CREATE TABLE IF NOT EXISTS evaluations (
-    evaluation_id VARCHAR(36) PRIMARY KEY,
-    resume_id VARCHAR(36) NOT NULL REFERENCES resumes(resume_id) ON DELETE CASCADE,
-    target_role_title VARCHAR(150) NOT NULL,
-    target_role_id VARCHAR(100) REFERENCES roles(role_id) ON DELETE SET NULL,
-    matched_role_id VARCHAR(100) REFERENCES roles(role_id) ON DELETE SET NULL,
-    overall_depth_score FLOAT NOT NULL,
-    tier VARCHAR(50) NOT NULL,
-    summary TEXT NOT NULL,
-    scoring_version VARCHAR(30) DEFAULT 'v1.0' NOT NULL,
+-- 14. Resume Gaps
+CREATE TABLE IF NOT EXISTS resume_gaps (
+    id SERIAL PRIMARY KEY,
+    resume_id VARCHAR(36) NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+    gap_start DATE NOT NULL,
+    gap_end DATE NOT NULL,
+    duration_months INT NOT NULL,
+    explanation TEXT,
+    confidence FLOAT
+);
+
+-- 15. Resume Skills (Verification Gate)
+CREATE TABLE IF NOT EXISTS resume_skills (
+    id VARCHAR(36) PRIMARY KEY,
+    resume_id VARCHAR(36) NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+    skill_id VARCHAR(80) NOT NULL REFERENCES technical_skills(skill_id) ON DELETE CASCADE,
+    detected_text VARCHAR(150) NOT NULL,
+    detection_method VARCHAR(30) NOT NULL,
+    confidence FLOAT NOT NULL,
+    verification_status VARCHAR(30) DEFAULT 'AUTO_CONFIRMED' NOT NULL,
+    user_modified BOOLEAN DEFAULT FALSE NOT NULL,
+    source_chunk_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+-- 16. Resume Experiences
+CREATE TABLE IF NOT EXISTS resume_experiences (
+    id VARCHAR(36) PRIMARY KEY,
+    resume_id VARCHAR(36) NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+    company VARCHAR(200) NOT NULL,
+    raw_title VARCHAR(200) NOT NULL,
+    canonical_role_id VARCHAR(100) REFERENCES roles(role_id) ON DELETE SET NULL,
+    canonical_title VARCHAR(200),
+    role_family VARCHAR(100),
+    seniority_level_id INT REFERENCES role_levels(id) ON DELETE SET NULL,
+    seniority_ambiguous BOOLEAN DEFAULT FALSE NOT NULL,
+    start_date DATE,
+    end_date DATE,
+    is_current BOOLEAN DEFAULT FALSE NOT NULL,
+    duration_months INT DEFAULT 0 NOT NULL,
+    responsibilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+    technologies JSONB NOT NULL DEFAULT '[]'::jsonb,
+    projects JSONB NOT NULL DEFAULT '[]'::jsonb,
+    leadership_indicators JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ownership_indicators JSONB NOT NULL DEFAULT '[]'::jsonb,
+    responsibility_level VARCHAR(40),
+    source_chunk_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    confidence FLOAT DEFAULT 1.0 NOT NULL,
+    sequence INT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
--- 13. Evaluation Aspect Scores
-CREATE TABLE IF NOT EXISTS evaluation_aspect_scores (
+-- 17. Resume Evaluations
+CREATE TABLE IF NOT EXISTS resume_evaluations (
+    id VARCHAR(36) PRIMARY KEY,
+    resume_id VARCHAR(36) NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+    target_role_raw VARCHAR(200) NOT NULL,
+    target_role_canonical_id VARCHAR(100) REFERENCES roles(role_id) ON DELETE SET NULL,
+    matched_role_id VARCHAR(100) REFERENCES roles(role_id) ON DELETE SET NULL,
+    role_domain_id INT REFERENCES role_domains(id) ON DELETE SET NULL,
+    overall_score FLOAT DEFAULT 0.0 NOT NULL,
+    tier VARCHAR(30),
+    completeness_score FLOAT DEFAULT 0.0 NOT NULL,
+    growth_score FLOAT DEFAULT 0.0 NOT NULL,
+    evidence_score FLOAT DEFAULT 0.0 NOT NULL,
+    experience_score FLOAT DEFAULT 0.0 NOT NULL,
+    summary TEXT,
+    status VARCHAR(30) DEFAULT 'COMPLETED' NOT NULL,
+    evaluation_version VARCHAR(30) DEFAULT 'eval-v1' NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+-- 18. Resume Evaluation Scores
+CREATE TABLE IF NOT EXISTS resume_evaluation_scores (
     id SERIAL PRIMARY KEY,
-    evaluation_id VARCHAR(36) NOT NULL REFERENCES evaluations(evaluation_id) ON DELETE CASCADE,
-    aspect_name VARCHAR(50) NOT NULL,
+    evaluation_id VARCHAR(36) NOT NULL REFERENCES resume_evaluations(id) ON DELETE CASCADE,
+    category VARCHAR(30) NOT NULL,
+    aspect_key VARCHAR(60) NOT NULL,
     score FLOAT NOT NULL,
+    max_score FLOAT NOT NULL,
     weight FLOAT NOT NULL,
-    rationale TEXT NOT NULL
+    reasoning TEXT NOT NULL,
+    evidence_chunk_ids JSONB NOT NULL DEFAULT '[]'::jsonb
 );
 
--- 14. Evaluation Evidence Items
-CREATE TABLE IF NOT EXISTS evaluation_evidence_items (
+-- 19. Resume Skill Evidence
+CREATE TABLE IF NOT EXISTS resume_skill_evidence (
     id SERIAL PRIMARY KEY,
-    evaluation_id VARCHAR(36) NOT NULL REFERENCES evaluations(evaluation_id) ON DELETE CASCADE,
-    aspect_name VARCHAR(50) NOT NULL,
-    skill_id VARCHAR(80) REFERENCES technical_skills(skill_id) ON DELETE SET NULL,
-    verdict VARCHAR(50) NOT NULL,
-    verdict_confidence FLOAT NOT NULL,
-    justification TEXT NOT NULL,
-    quoted_text TEXT,
-    chunk_id VARCHAR(36) REFERENCES resume_chunks(chunk_id) ON DELETE SET NULL
+    evaluation_id VARCHAR(36) NOT NULL REFERENCES resume_evaluations(id) ON DELETE CASCADE,
+    skill_id VARCHAR(80) NOT NULL REFERENCES technical_skills(skill_id) ON DELETE CASCADE,
+    evidence_type VARCHAR(40) NOT NULL,
+    strength VARCHAR(20) NOT NULL,
+    chunk_id VARCHAR(36) REFERENCES resume_chunks(chunk_id) ON DELETE SET NULL,
+    snippet TEXT,
+    reasoning TEXT NOT NULL
 );
 
--- Indexes for vector similarity search (IVFFlat/HNSW)
-CREATE INDEX IF NOT EXISTS idx_tech_skills_embedding ON technical_skills USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
-CREATE INDEX IF NOT EXISTS idx_roles_embedding ON roles USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
-CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON resume_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+-- 20. Resume Recommendations
+CREATE TABLE IF NOT EXISTS resume_recommendations (
+    id SERIAL PRIMARY KEY,
+    evaluation_id VARCHAR(36) NOT NULL REFERENCES resume_evaluations(id) ON DELETE CASCADE,
+    category VARCHAR(40) NOT NULL,
+    title VARCHAR(150) NOT NULL,
+    description TEXT NOT NULL,
+    target_skill_id VARCHAR(80) REFERENCES technical_skills(skill_id) ON DELETE SET NULL,
+    priority VARCHAR(20) DEFAULT 'MEDIUM' NOT NULL
+);
+
+-- 21. Resume Agent Runs
+CREATE TABLE IF NOT EXISTS resume_agent_runs (
+    id SERIAL PRIMARY KEY,
+    evaluation_id VARCHAR(36) NOT NULL REFERENCES resume_evaluations(id) ON DELETE CASCADE,
+    agent_name VARCHAR(50) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    duration_ms INT NOT NULL,
+    prompt_tokens INT,
+    completion_tokens INT,
+    model_name VARCHAR(60),
+    error_message TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
 
 
 -- ========================================================
