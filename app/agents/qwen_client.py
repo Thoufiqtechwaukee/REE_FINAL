@@ -20,8 +20,8 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_SECONDS = 120.0
-_MAX_RETRIES = 2
+_TIMEOUT_SECONDS = 20.0
+_MAX_RETRIES = 1
 
 
 class QwenUnavailableError(Exception):

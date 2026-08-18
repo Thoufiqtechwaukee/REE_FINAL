@@ -92,7 +92,7 @@ async def analyze_growth(
         ],
     }
 
-    data = await call_chat_json(GROWTH_PROMPT, json.dumps(payload), max_tokens=3000)
+    data = await call_chat_json(GROWTH_PROMPT, json.dumps(payload), max_tokens=1000)
     if not isinstance(data, dict) or "dimensions" not in data:
         logger.warning("Growth agent: Qwen unavailable or unparseable for resume %s", resume_id)
         return GrowthResult(available=False, dimensions=[], total_score=0.0, observations=[], interview_preparation=[])
