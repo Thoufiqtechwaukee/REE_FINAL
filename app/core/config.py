@@ -21,7 +21,10 @@ class Settings(BaseSettings):
     def db_url(self) -> str:
         url = self.database_url.strip()
         if url.startswith("postgres://"):
-            return "postgresql://" + url[11:]
+            url = "postgresql://" + url[11:]
+        if url.startswith("postgresql://") and "sslmode" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}sslmode=require"
         return url
 
     storage_dir: str = "./storage"

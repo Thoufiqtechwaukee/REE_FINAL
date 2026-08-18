@@ -12,6 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from sqlalchemy.orm import joinedload
+
 from app.db.models.role import Role
 from app.db.models.skill import TechnicalSkill
 from app.db.session import SessionLocal
@@ -20,7 +22,7 @@ from app.vector.index_manager import role_index, skill_index, vector_id_for
 
 
 async def embed_skills(db):
-    skills = db.query(TechnicalSkill).filter(TechnicalSkill.active == True).all()
+    skills = db.query(TechnicalSkill).options(joinedload(TechnicalSkill.category)).filter(TechnicalSkill.active == True).all()
     if not skills:
         return
     texts = [
