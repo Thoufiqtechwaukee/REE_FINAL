@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: ree-final
+    env: python
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: RUNPOD_ENDPOINT_URL
+        value: https://ngm10kld7tv8i0-11434.proxy.runpod.net/v1
+      - key: RUNPOD_CHAT_MODEL
+        value: qwen2.5:14b
+      - key: RUNPOD_EMBEDDING_MODEL
+        value: nomic-embed-text
+      - key: DATABASE_URL
+        sync: false
+      - key: STORAGE_DIR
+        value: ./storage
+      - key: GAP_THRESHOLD_MONTHS
+        value: "6"

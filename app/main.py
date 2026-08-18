@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import evaluation as evaluation_routes
@@ -11,6 +12,14 @@ from app.core.logging import configure_logging
 configure_logging()
 
 app = FastAPI(title="REE FINAL - Resume Depth Evaluation Engine")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(resume_routes.router)
 app.include_router(skills_routes.router)

@@ -13,7 +13,7 @@ from app.core.config import get_settings
 
 _settings = get_settings()
 
-engine = create_engine(_settings.database_url, pool_pre_ping=True, future=True)
+engine = create_engine(_settings.db_url, pool_pre_ping=True, pool_recycle=300, future=True)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 

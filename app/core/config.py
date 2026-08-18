@@ -17,6 +17,13 @@ class Settings(BaseSettings):
 
     database_url: str = "mssql+pyodbc://@localhost/REEFinalDB?driver=ODBC+Driver+17+for+SQL+Server&trusted_connection=yes"
 
+    @property
+    def db_url(self) -> str:
+        url = self.database_url.strip()
+        if url.startswith("postgres://"):
+            return "postgresql://" + url[11:]
+        return url
+
     storage_dir: str = "./storage"
     gap_threshold_months: int = 6
 
