@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS resume_skills (
     resume_id VARCHAR(36) NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
     skill_id VARCHAR(80) NOT NULL REFERENCES technical_skills(skill_id) ON DELETE CASCADE,
     detected_text VARCHAR(150) NOT NULL,
+    canonical_name VARCHAR(150) NOT NULL,
     detection_method VARCHAR(30) NOT NULL,
     confidence FLOAT NOT NULL,
     verification_status VARCHAR(30) DEFAULT 'AUTO_CONFIRMED' NOT NULL,
