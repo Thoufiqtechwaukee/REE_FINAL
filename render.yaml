@@ -12,6 +12,10 @@ services:
         value: qwen2.5:14b
       - key: RUNPOD_EMBEDDING_MODEL
         value: nomic-embed-text
+      - key: SUPABASE_URL
+        value: https://gzwwwjksyrpkspxrcuny.supabase.co
+      - key: SUPABASE_PUBLISHABLE_KEY
+        value: sb_publishable_VYHSrIQiRW0M78Tb-fJW0g_GOR4Ccd3
       - key: DATABASE_URL
         sync: false
       - key: STORAGE_DIR
