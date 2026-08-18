@@ -192,7 +192,7 @@ async def discover_skills(db: Session, chunks: list[ResumeChunk]) -> list[Discov
 
     # --- Layer 3: Qwen validation for ambiguous Skills-section candidates ---
     if ambiguous_items:
-        verdicts = await validate_ambiguous_skills(ambiguous_items)
+        verdicts = await validate_ambiguous_skills(ambiguous_items[:10])
         for item in ambiguous_items:
             verdict = verdicts.get(item.detected_text)
             chunk_id = ambiguous_source.get(item.detected_text, "")

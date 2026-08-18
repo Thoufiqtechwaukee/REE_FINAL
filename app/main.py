@@ -21,10 +21,24 @@ async def lifespan(app: FastAPI):
     try:
         import app.db.models  # Register all models
         from app.db.base import Base
-        from app.db.session import engine
+        from app.db.session import SessionLocal, engine
+        from app.vector.index_manager import skill_index
 
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables initialized successfully.")
+
+        if skill_index()._index is None or skill_index()._index.ntotal == 0:
+            logger.info("Initializing FAISS catalog vector indices...")
+            db = SessionLocal()
+            try:
+                from scripts.embed_catalogs import embed_roles, embed_skills
+                await embed_skills(db)
+                await embed_roles(db)
+                logger.info("FAISS catalog indices initialized successfully.")
+            except Exception as e:
+                logger.warning(f"Catalog embedding auto-seed warning: {e}")
+            finally:
+                db.close()
     except Exception as exc:
         logger.warning(f"Database auto-init warning: {exc}")
     yield
