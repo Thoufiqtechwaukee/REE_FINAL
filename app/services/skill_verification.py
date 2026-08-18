@@ -92,6 +92,8 @@ def freeze_verified_skills(db: Session, resume_id: str) -> list[ResumeSkill]:
     resume = db.get(Resume, resume_id)
     if resume is None:
         raise ValueError("Resume not found")
+    if resume.status in (ResumeStatus.SKILLS_VERIFIED, ResumeStatus.EVALUATING, ResumeStatus.COMPLETED):
+        return list_skills_for_verification(db, resume_id)
     if resume.status not in (ResumeStatus.SKILLS_IDENTIFIED, ResumeStatus.WAITING_FOR_SKILL_VERIFICATION):
         raise ValueError(f"Cannot freeze skills from status {resume.status}")
 
