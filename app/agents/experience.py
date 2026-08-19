@@ -62,21 +62,6 @@ async def build_experience_records(db: Session, resume_id: str) -> list[ResumeEx
 
     sorted_role_chunks = sorted(role_chunks, key=sort_key)
 
-    # Role-catalog matching is hoisted out of the loop below: the catalog is
-    # loaded once and every title needing semantic fallback is embedded in one
-    # request, instead of two SQL queries + a possible embedding round-trip
-    # per role. Only titles that survive _looks_like_real_role are matched --
-    # exactly the set the loop would have queried, so no wasted work. The loop
-    # itself stays sequential: classify_seniority threads previous_level_id
-    # from the chronologically-earlier role, which is a real data dependency.
-    matchable_titles = [
-        c.role_raw for c in sorted_role_chunks
-        if c.role_raw and _looks_like_real_role(c.company, c.role_raw)
-    ]
-    candidates_by_title = (
-        await role_matcher.find_candidates_batch(db, matchable_titles) if matchable_titles else {}
-    )
-
     db.query(ResumeExperience).filter(ResumeExperience.resume_id == resume_id).delete()
 
     records: list[ResumeExperience] = []
@@ -102,7 +87,7 @@ async def build_experience_records(db: Session, resume_id: str) -> list[ResumeEx
         seniority_level_id = None
         seniority_ambiguous = False
         if chunk.role_raw:
-            candidates = candidates_by_title.get(chunk.role_raw, [])
+            candidates = await role_matcher.find_candidates(db, chunk.role_raw)
             if candidates and role_matcher.is_confident(candidates):
                 top = candidates[0].role
                 canonical_role_id = top.role_id

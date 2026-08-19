@@ -68,18 +68,6 @@ _ALL_DIGITS = re.compile(r"^\d+$")
 _DATE_LIKE = re.compile(r"\b(19|20)\d{2}\b")
 
 
-def is_location_text(text: str) -> bool:
-    """True if the text names a place rather than an organization. Shared with
-    the chunker, which must not mistake the "Bangalore" / "Chennai, India"
-    line sitting beside a role header for the employer's name."""
-    if not text or not text.strip():
-        return False
-    trimmed = text.strip()
-    if trimmed.lower() in _LOCATIONS:
-        return True
-    return trimmed.split(",")[0].strip().lower() in _LOCATIONS
-
-
 def is_plausible_skill_candidate(text: str) -> bool:
     """Fast pre-filter -- True means "worth attempting catalog matching",
     False means "reject outright, do not spend a match attempt". This is

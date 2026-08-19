@@ -33,9 +33,22 @@ def _resume_scoped_query(db: Session, resume_id: str, filters: RetrievalFilter |
     return q
 
 
-def _hits_to_results(hits: list[tuple[int, float]], vector_id_to_chunk: dict, min_similarity: float) -> list[RetrievalResult]:
-    """Shared by search_resume and search_resume_batch so both stay behavior-
-    identical by construction rather than by two hand-kept-in-sync copies."""
+async def search_resume(
+    db: Session,
+    resume_id: str,
+    query_text: str,
+    top_k: int = 5,
+    filters: RetrievalFilter | None = None,
+    min_similarity: float = 0.0,
+) -> list[RetrievalResult]:
+    scoped_rows = _resume_scoped_query(db, resume_id, filters).all()
+    if not scoped_rows:
+        return []
+    vector_id_to_chunk = {row.vector_id: row for row in scoped_rows}
+
+    query_vec = (await embed_batch([query_text]))[0]
+    hits = resume_index().search(query_vec, top_k=top_k, allowed_ids=set(vector_id_to_chunk.keys()))
+
     results: list[RetrievalResult] = []
     for vector_id, score in hits:
         if score < min_similarity:
@@ -60,78 +73,9 @@ def _hits_to_results(hits: list[tuple[int, float]], vector_id_to_chunk: dict, mi
     return results
 
 
-async def search_resume(
-    db: Session,
-    resume_id: str,
-    query_text: str,
-    top_k: int = 5,
-    filters: RetrievalFilter | None = None,
-    min_similarity: float = 0.0,
-) -> list[RetrievalResult]:
-    scoped_rows = _resume_scoped_query(db, resume_id, filters).all()
-    if not scoped_rows:
-        return []
-    vector_id_to_chunk = {row.vector_id: row for row in scoped_rows}
-
-    query_vec = (await embed_batch([query_text]))[0]
-    hits = resume_index().search(query_vec, top_k=top_k, allowed_ids=set(vector_id_to_chunk.keys()))
-    return _hits_to_results(hits, vector_id_to_chunk, min_similarity)
-
-
-async def search_resume_batch(
-    db: Session,
-    resume_id: str,
-    query_texts: list[str],
-    top_k: int = 5,
-    filters: RetrievalFilter | None = None,
-    min_similarity: float = 0.0,
-) -> dict[str, list[RetrievalResult]]:
-    """Batched counterpart to search_resume: one resume-scoped chunk query and
-    one embedding request covering every query text, instead of repeating
-    both per query. FAISS search itself stays per-query (it's local/in-process,
-    not network I/O, so looping over it costs nothing) -- only the embedding
-    round-trip and the chunk lookup are shared. Per-query top_k/min_similarity
-    semantics, and therefore results, are identical to calling search_resume
-    once per query -- this is a performance change only, not a matching-logic
-    change. Returns a dict keyed by the original query text (duplicates
-    collapse to one entry, matching how a caller would reasonably use it)."""
-    if not query_texts:
-        return {}
-    scoped_rows = _resume_scoped_query(db, resume_id, filters).all()
-    if not scoped_rows:
-        return {q: [] for q in query_texts}
-    vector_id_to_chunk = {row.vector_id: row for row in scoped_rows}
-    allowed_ids = set(vector_id_to_chunk.keys())
-
-    unique_queries = list(dict.fromkeys(query_texts))
-    query_vecs = await embed_batch(unique_queries)
-
-    results: dict[str, list[RetrievalResult]] = {}
-    for query_text, query_vec in zip(unique_queries, query_vecs):
-        hits = resume_index().search(query_vec, top_k=top_k, allowed_ids=allowed_ids)
-        results[query_text] = _hits_to_results(hits, vector_id_to_chunk, min_similarity)
-    return results
-
-
 async def search_skill_evidence(db: Session, resume_id: str, skill_name: str, top_k: int = 5) -> list[RetrievalResult]:
     query = f"Find professional evidence demonstrating implementation or use of {skill_name}."
     return await search_resume(db, resume_id, query, top_k=top_k, min_similarity=0.3)
-
-
-async def search_skill_evidence_batch(
-    db: Session, resume_id: str, skill_names: list[str], top_k: int = 5
-) -> dict[str, list[RetrievalResult]]:
-    """Batched counterpart to search_skill_evidence -- same query template and
-    thresholds per skill, one embedding round-trip for all of them."""
-    if not skill_names:
-        return {}
-    query_by_name = {
-        name: f"Find professional evidence demonstrating implementation or use of {name}." for name in skill_names
-    }
-    results_by_query = await search_resume_batch(
-        db, resume_id, list(query_by_name.values()), top_k=top_k, min_similarity=0.3
-    )
-    return {name: results_by_query.get(query, []) for name, query in query_by_name.items()}
 
 
 async def search_experience(db: Session, resume_id: str, top_k: int = 10) -> list[RetrievalResult]:

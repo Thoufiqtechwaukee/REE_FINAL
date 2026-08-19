@@ -21,10 +21,6 @@ from app.taxonomy.candidate_filter import is_plausible_skill_candidate
 _DELIM_SPLIT = re.compile(r"[\r\n,•▪●-|\t;]+")
 _SHORT_SLASH_JOIN = re.compile(r"\b(\w{1,4})\s*/\s*(\w{1,4})\b")
 
-# Bounds on what counts as a "Category:" prefix rather than part of a skill.
-_MAX_LABEL_WORDS = 4
-_MAX_LABEL_CHARS = 34
-
 _PROSE_CHUNK_TYPES = {
     ChunkType.SUMMARY.value,
     ChunkType.EXPERIENCE_RESPONSIBILITY.value,
@@ -52,39 +48,12 @@ _PROSE_SCAN_DENYLIST = {
 }
 
 
-def _strip_category_label(segment: str) -> str:
-    """Drops a leading "Category:" prefix, keeping only the value side.
-
-    Skills sections are overwhelmingly written as "Backend: FastAPI, REST API
-    Design" -- the part before the colon names a *category*, not a skill. The
-    previous implementation split on commas but not colons and then stripped
-    ':' as punctuation, which turned the label "Backend:" into the candidate
-    "Backend" and destroyed the one signal marking it as a label. Because
-    "Backend" matches no catalog entry, it fell through to semantic search and
-    then to Qwen, which resolved it to ASP.NET Core at 80% confidence on a
-    resume containing no .NET whatsoever; "Core CS:" likewise became C++.
-    Dropping the label side kills that class of fabrication at the source
-    rather than relying on Qwen to decline it."""
-    head, sep, tail = segment.partition(":")
-    if not sep:
-        return segment
-    # Only treat it as a label when the head is short and word-like; a colon
-    # inside a real skill name ("C++: Advanced") is not a category prefix, and
-    # a long head is prose that happens to contain a colon.
-    if len(head.split()) <= _MAX_LABEL_WORDS and len(head) <= _MAX_LABEL_CHARS:
-        return tail
-    return segment
-
-
 def _extract_skills_section_candidates(text: str) -> list[str]:
     protected = _SHORT_SLASH_JOIN.sub(lambda m: f"{m.group(1)}/{m.group(2)}", text)
+    parts = _DELIM_SPLIT.split(protected)
     candidates = []
-    for raw in _DELIM_SPLIT.split(protected):
-        # Label-stripping happens per delimited segment and *before* the
-        # punctuation strip, so the trailing colon is still present to be
-        # recognized. A segment that is nothing but a label ("Backend:")
-        # reduces to empty here and is dropped by the length check below.
-        p = _strip_category_label(raw).strip(" .;:()-•")
+    for p in parts:
+        p = p.strip(" .;:()-•")
         if p and 2 <= len(p) <= 60:
             candidates.append(p)
     return candidates
@@ -136,51 +105,28 @@ async def discover_skills(db: Session, chunks: list[ResumeChunk]) -> list[Discov
                 existing.detection_method = method
 
     # --- Layer 1: Skills-section structural candidates ---
-    # Every (chunk, candidate_text) occurrence is collected first -- including
-    # duplicates across multiple Skills sections (spec §70 edge case: multiple
-    # Skills sections) -- so per-occurrence source-chunk tracking below is
-    # unchanged from before; only the matching call itself is batched: one
-    # embedding round-trip for every *unique* candidate text that needs
-    # semantic fallback, instead of one round-trip per occurrence.
     skill_section_chunks = [c for c in chunks if c.chunk_type == ChunkType.SKILL_SECTION.value or c.chunk_type == ChunkType.SKILL_SECTION]
-    chunk_candidate_pairs: list[tuple[ResumeChunk, str]] = [
-        (chunk, candidate_text)
-        for chunk in skill_section_chunks
-        for candidate_text in _extract_skills_section_candidates(chunk.original_text)
-    ]
-    unique_candidate_texts = list({text for _, text in chunk_candidate_pairs})
-    candidates_by_text = await skill_matcher.find_candidates_batch(db, unique_candidate_texts, exact_map, alias_map, fuzzy_universe)
+    for chunk in skill_section_chunks:
+        for candidate_text in _extract_skills_section_candidates(chunk.original_text):
+            candidates = await skill_matcher.find_candidates(db, candidate_text, exact_map, alias_map, fuzzy_universe)
+            if not candidates:
+                continue
+            if skill_matcher.is_confident(candidates):
+                top = candidates[0]
+                _accept(top.skill, candidate_text, top.confidence, top.method, chunk.chunk_id)
+            else:
+                ambiguous_items.append(AmbiguousSkillItem(detected_text=candidate_text, candidates=candidates[:5]))
+                ambiguous_source.setdefault(candidate_text, chunk.chunk_id)
 
-    for chunk, candidate_text in chunk_candidate_pairs:
-        candidates = candidates_by_text.get(candidate_text, [])
-        if not candidates:
-            continue
-        if skill_matcher.is_confident(candidates):
-            top = candidates[0]
-            _accept(top.skill, candidate_text, top.confidence, top.method, chunk.chunk_id)
-        else:
-            ambiguous_items.append(AmbiguousSkillItem(detected_text=candidate_text, candidates=candidates[:5]))
-            ambiguous_source.setdefault(candidate_text, chunk.chunk_id)
-
-    # --- Layer 2: catalog-name scanning ---
-    # Runs over prose chunks *and* the Skills section. Layer 1 splits the
-    # Skills section on delimiters, which misses chip/tag layouts that
-    # separate entries with spaces alone ("Python SQL Machine Learning
-    # Vue.js" renders as four chips but is one delimiter-free line) -- a real
-    # resume lost its entire skill list that way once its sections were
-    # mapped correctly, because Layer 1 produced one unmatchable blob per
-    # line. The denylist is applied only outside the Skills section: "Go" or
-    # "R" appearing in prose is ambiguous, but listed as a skill it is an
-    # explicit claim, which is the distinction the denylist was written for.
+    # --- Layer 2: whole-resume prose discovery ---
     if prose_regex is not None:
         for chunk in chunks:
             chunk_type_val = chunk.chunk_type.value if hasattr(chunk.chunk_type, "value") else chunk.chunk_type
-            is_skills_section = chunk_type_val == ChunkType.SKILL_SECTION.value
-            if chunk_type_val not in _PROSE_CHUNK_TYPES and not is_skills_section:
+            if chunk_type_val not in _PROSE_CHUNK_TYPES:
                 continue
             for match in prose_regex.finditer(chunk.original_text or ""):
                 matched_text = match.group(0)
-                if not is_skills_section and matched_text.lower() in _PROSE_SCAN_DENYLIST:
+                if matched_text.lower() in _PROSE_SCAN_DENYLIST:
                     continue
                 skill = names_by_lower.get(matched_text.lower())
                 if skill is None:
@@ -192,7 +138,7 @@ async def discover_skills(db: Session, chunks: list[ResumeChunk]) -> list[Discov
 
     # --- Layer 3: Qwen validation for ambiguous Skills-section candidates ---
     if ambiguous_items:
-        verdicts = await validate_ambiguous_skills(ambiguous_items[:10])
+        verdicts = await validate_ambiguous_skills(ambiguous_items)
         for item in ambiguous_items:
             verdict = verdicts.get(item.detected_text)
             chunk_id = ambiguous_source.get(item.detected_text, "")

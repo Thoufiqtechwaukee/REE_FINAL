@@ -18,7 +18,7 @@ from app.agents.qwen_client import call_chat_json
 from app.db.models.evaluation import EvidenceStrength, EvidenceType, ResumeSkill, ResumeSkillEvidence
 from app.db.models.resume import ChunkType, ResumeChunk
 from app.db.models.skill import TechnicalSkill
-from app.retrieval.resume_retrieval import search_skill_evidence_batch
+from app.retrieval.resume_retrieval import search_skill_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -80,21 +80,14 @@ async def _validate_weak_none_via_qwen(
     if not weak_none_skills:
         return {}
 
-    # One embedding round-trip covering every skill that needs RAG retrieval,
-    # instead of one round-trip per skill in a sequential loop -- same
-    # per-skill query template/top_k/min_similarity as before, just batched.
-    skill_id_by_name: dict[str, str] = {}
+    per_skill_passages: dict[str, list[dict]] = {}
     for rs in weak_none_skills:
         skill = skill_by_id.get(rs.skill_id)
-        if skill is not None:
-            skill_id_by_name[skill.canonical_name] = rs.skill_id
-
-    hits_by_name = await search_skill_evidence_batch(db, resume_id, list(skill_id_by_name.keys()), top_k=5)
-
-    per_skill_passages: dict[str, list[dict]] = {}
-    for name, hits in hits_by_name.items():
+        if skill is None:
+            continue
+        hits = await search_skill_evidence(db, resume_id, skill.canonical_name, top_k=5)
         if hits:
-            per_skill_passages[skill_id_by_name[name]] = [
+            per_skill_passages[rs.skill_id] = [
                 {"chunk_id": h.chunk_id, "text": h.original_text} for h in hits
             ]
 

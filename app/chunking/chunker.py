@@ -18,7 +18,6 @@ from app.db.models.common import CanonicalSection
 from app.models.chunk import ChunkDraft
 from app.models.resume import Block, ResumeExtractionDocument
 from app.extraction.section_mapper import SectionMappingResult
-from app.taxonomy.candidate_filter import is_location_text
 
 _MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
 _YEAR = r"(?:\d{4}|\d{2})"
@@ -46,16 +45,6 @@ _LABEL_SKIP = re.compile(r"^Responsibilities\s*:?\s*$", re.IGNORECASE)
 _BULLET_PREFIX = re.compile(r"^[•\-*o●▪-]\s*")
 
 
-# Supersedes the class above, which is retained verbatim for its Wingdings
-# private-use-area bullet codepoints. The fix: the letter 'o' list marker now
-# requires following whitespace. Written as "[...o...]\s*" with \s* meaning
-# zero-or-more, it matched *any* word beginning with a lower-case o -- so
-# "online" registered as a bulleted line, and _strip_bullet rewrote
-# "owned delivery" to "wned delivery", silently corrupting responsibility text
-# and truncating the header scan that looks for a role's company.
-_BULLET_PREFIX = re.compile("^(?:[•\\-*●▪-]\\s*|o\\s+)")
-
-
 def _strip_bullet(text: str) -> str:
     return _BULLET_PREFIX.sub("", text).strip()
 
@@ -69,113 +58,6 @@ def _looks_like_title(text: str) -> bool:
     if trimmed.endswith("."):
         return False
     return True
-
-
-# Words that mark a line as a job title rather than an employer name. Used to
-# decide which of an entry's non-date lines is the role and which is the
-# company, since resume templates order the two both ways.
-_TITLE_WORDS = re.compile(
-    r"\b(intern|engineer|developer|manager|analyst|consultant|architect|designer|"
-    r"scientist|administrator|specialist|lead|director|officer|associate|trainee|"
-    r"executive|head|programmer|technician|coordinator|supervisor|founder)\b",
-    re.IGNORECASE,
-)
-# Employment-mode noise sitting between the title and the dates in several
-# templates -- neither company nor role.
-_ENTRY_NOISE = re.compile(
-    r"^(online(\s+internship)?|remote|onsite|on-site|hybrid|full[\s-]?time|"
-    r"part[\s-]?time|internship|contract|freelance)$",
-    re.IGNORECASE,
-)
-
-
-def _clean_entry_line(text: str) -> str:
-    """Strips the date range and surrounding separators off a line, leaving
-    just company/title text (empty if the line held only a date). The comma
-    matters: a date row written "01/2025 - 03/2025," left a bare "," behind,
-    and "," is truthy, so it passed validation as a company name."""
-    return _DATE_RANGE_LINE.sub("", text).strip(" ,-–—:|·\t")
-
-
-def _entry_context_lines(blocks: list[Block], start: int, stop: int, step: int, limit: int = 3) -> list[str]:
-    """Company/title-bearing lines near an anchor, nearest first.
-
-    Scanning stops at the first bulleted line, because bullets begin the
-    responsibilities and therefore end the header block. Without that stop the
-    forward scan runs past the current entry's bullets into the *next* entry's
-    stacked header and picks up its title -- so a two-role resume recorded
-    role 1 as "Senior Developer", role 2's title."""
-    out: list[str] = []
-    for i in range(start, stop, step):
-        text = blocks[i].text.strip()
-        if not text:
-            continue
-        if _BULLET_PREFIX.match(text):
-            break
-        if _DATE_RANGE_LINE.search(text):
-            continue
-        cleaned = _clean_entry_line(text)
-        if cleaned and not _ENTRY_NOISE.match(cleaned):
-            out.append(cleaned)
-            if len(out) >= limit:
-                break
-    return out
-
-
-def _looks_like_entry_header(text: str) -> bool:
-    """True for a line that could be a company or job title, as opposed to
-    wrapped bullet prose. Responsibility text wraps onto unbulleted
-    continuation lines, so proximity to the date row is not enough on its own
-    -- "fraud prevention." and "automate land registration processes,
-    ensuring immutability and" both sit directly above a role header."""
-    if not text:
-        return False
-    trimmed = text.strip()
-    if not trimmed or len(trimmed) > 90:
-        return False
-    if trimmed.endswith("."):
-        return False
-    if trimmed[0].islower():
-        return False  # mid-sentence continuation
-    if len(trimmed.split()) > 8:
-        return False  # reads as prose, not a name or title
-    if _ENTRY_NOISE.match(trimmed):
-        return False
-    return not is_location_text(trimmed)
-
-
-def _first_title(lines: list[str]) -> str | None:
-    return next((c for c in lines if _TITLE_WORDS.search(c)), None)
-
-
-def _resolve_company_and_role(
-    anchor_text: str, before: list[str], after: list[str]
-) -> tuple[str | None, str | None]:
-    """Picks company and role from an entry's candidate lines.
-
-    Templates disagree on layout: some put the date alone on its own row with
-    "Company / Title" stacked above it, others put the title and a right-
-    aligned date on one row with the company beneath. Rather than encode
-    either layout, this locates the job title by vocabulary and takes the
-    company from the *same* side of the date row -- a resume entry's header is
-    contiguous, so pulling the company from across the date row is how
-    "Achievements/Tasks" (the next entry's label) ends up recorded as an
-    employer. Returns None for either field rather than guessing, letting the
-    caller's validation reject a truly headerless entry."""
-    head = [t for t in [_clean_entry_line(anchor_text)] if _looks_like_entry_header(t)]
-    before = [b for b in before if _looks_like_entry_header(b)]
-    after = [a for a in after if _looks_like_entry_header(a)]
-
-    # Prefer whichever side actually carries a job title; the anchor row and
-    # the lines below it form one group, the lines above it the other.
-    anchor_side = head + after
-    primary = anchor_side if _first_title(anchor_side) else before
-
-    role = _first_title(primary)
-    company = next((c for c in primary if c != role), None)
-    if role is None and company is None:
-        return None, None
-    return company, role
 
 
 class _BlockIndex:
@@ -362,20 +244,14 @@ def _chunk_experience(blocks: list[Block], section: str, next_seq) -> list[Chunk
         parsed = parse_date_range(date_match.group("range"), today=date.today()) if date_match else None
 
         company = None
-        role_raw = None
         m = _LABEL_COMPANY.match(anchor_text.strip())
         if m:
             company = _DATE_RANGE_LINE.sub("", m.group("val")).strip(" -–—")
         else:
-            # Positional resolution: look at the lines immediately before the
-            # anchor (bounded by the previous role's anchor so one entry never
-            # steals another's header) and immediately after it, then let
-            # _resolve_company_and_role decide which is which.
-            prev_anchor = anchor_indices[k - 1] if k > 0 else -1
-            before = _entry_context_lines(blocks, start_idx - 1, prev_anchor, -1)
-            after = _entry_context_lines(blocks, start_idx + 1, min(end_idx, len(blocks)), 1, limit=2)
-            company, role_raw = _resolve_company_and_role(anchor_text, before, after)
+            stripped = _DATE_RANGE_LINE.sub("", anchor_text).strip(" -–—:")
+            company = stripped or None
 
+        role_raw = None
         responsibilities: list[str] = []
         tech_line: str | None = None
         role_block_ids = [anchor_block.block_id]

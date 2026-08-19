@@ -56,7 +56,6 @@ _PATTERNS: list[tuple[CanonicalSection, re.Pattern]] = [
 ]
 
 _HEADING_LEN_MAX = 60
-_HEADING_WORD_MAX = 5
 _AMBIGUOUS_HEADING_LEN_MAX = 40
 _AMBIGUOUS_WORD_COUNT_MAX = 5
 _HAS_DIGIT = re.compile(r"\d")
@@ -67,21 +66,6 @@ def is_possible_heading_line(line: str) -> bool:
     if not trimmed or len(trimmed) > _HEADING_LEN_MAX:
         return False
     if _BULLET_START.match(trimmed):
-        return False
-    # A heading names a section; it is not a sentence. Responsibility bullets
-    # wrap onto unbulleted continuation lines that are short enough to pass
-    # the length test above -- "3+ active projects in an agile environment."
-    # matched the PROJECTS pattern mid-way through an Experience section and
-    # dumped the remaining roles into Projects, losing them entirely.
-    if trimmed.endswith((".", ",", ";")):
-        return False
-    words = trimmed.split()
-    if len(words) > _HEADING_WORD_MAX:
-        return False
-    # A multi-word line starting lower-case is mid-sentence continuation.
-    # One- and two-word lower-case lines are left alone, because minimalist
-    # templates do legitimately write "education" / "work experience".
-    if len(words) >= 3 and trimmed[0].islower():
         return False
     return True
 
@@ -118,32 +102,12 @@ class SectionMappingResult:
     ambiguous_heading_block_ids: list[str]
 
 
-def _recurring_line_texts(blocks: list[Block]) -> set[str]:
-    """Normalized line texts that occur more than once in the document.
-
-    A section heading names a section, so it appears once; a string that
-    recurs is a per-entry template label. This distinction is what stops
-    "Achievements/Tasks" -- emitted once per role by several resume builders
-    -- from matching the ACHIEVEMENTS pattern and resetting the active
-    section mid-way through the Experience section, which shredded one real
-    resume's employment history into three bogus ACHIEVEMENTS sections and
-    left it scoring 0/25 on Experience. Structural, so it generalizes to any
-    recurring label rather than denylisting this one phrase."""
-    counts: dict[str, int] = {}
-    for b in blocks:
-        key = b.text.strip().upper()
-        if key:
-            counts[key] = counts.get(key, 0) + 1
-    return {text for text, n in counts.items() if n > 1}
-
-
 def map_blocks_to_sections(blocks: list[Block], default_section: CanonicalSection = CanonicalSection.CONTACT) -> SectionMappingResult:
     """Walks blocks in reading order, flushing a SectionAssignment each time a
     recognized heading is encountered. A page/document starting mid-section
     (no repeated header) inherits the previous block's active section."""
     sections: list[SectionAssignment] = []
     ambiguous_ids: list[str] = []
-    recurring = _recurring_line_texts(blocks)
 
     current_section = default_section
     current_confidence = 0.5  # default section is a guess until a real heading is seen
@@ -175,7 +139,7 @@ def map_blocks_to_sections(blocks: list[Block], default_section: CanonicalSectio
         if not trimmed:
             continue
 
-        if is_possible_heading_line(trimmed) and trimmed.upper() not in recurring:
+        if is_possible_heading_line(trimmed):
             matched = match_canonical_section(trimmed)
             if matched is not None:
                 flush()

@@ -73,7 +73,7 @@ async def run_full_evaluation(db: Session, resume_id: str) -> dict:
     resume = db.get(Resume, resume_id)
     if resume is None:
         raise ValueError("Resume not found")
-    if resume.status not in (ResumeStatus.SKILLS_VERIFIED, ResumeStatus.EVALUATING, ResumeStatus.COMPLETED):
+    if resume.status != ResumeStatus.SKILLS_VERIFIED:
         raise PermissionError(
             f"Evaluation cannot start: skills have not been verified (current status: {resume.status.value})"
         )

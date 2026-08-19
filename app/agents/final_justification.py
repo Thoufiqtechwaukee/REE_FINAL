@@ -54,7 +54,7 @@ async def generate_final_justification(
         "experience_summary": experience_summary,
     }
 
-    data = await call_chat_json(FINAL_JUSTIFICATION_PROMPT, json.dumps(payload), max_tokens=800)
+    data = await call_chat_json(FINAL_JUSTIFICATION_PROMPT, json.dumps(payload), max_tokens=1500)
     if not isinstance(data, dict) or "overall_assessment" not in data:
         logger.warning("Final justification: Qwen unavailable, using deterministic fallback")
         evidence_summary = evidence_highlights[0] if evidence_highlights else "Evidence review completed."

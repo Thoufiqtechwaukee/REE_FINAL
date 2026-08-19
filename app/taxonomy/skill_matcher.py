@@ -13,7 +13,7 @@ from rapidfuzz import fuzz, process
 from sqlalchemy.orm import Session
 
 from app.db.models.skill import TechnicalSkill, TechnicalSkillAlias
-from app.retrieval.skill_retrieval import search_skill_candidates, search_skill_candidates_batch
+from app.retrieval.skill_retrieval import search_skill_candidates
 from app.taxonomy.candidate_filter import is_plausible_skill_candidate
 
 _LOOSE_KEY_STRIP = re.compile(r"[\s\-.]+")
@@ -82,41 +82,6 @@ async def match_semantic(
     return [SkillMatchCandidate(skill=skill, confidence=score, method="SEMANTIC") for skill, score in hits]
 
 
-def _combine_fuzzy_and_semantic(
-    fuzzy: SkillMatchCandidate | None, semantic_hits: list[tuple[TechnicalSkill, float]]
-) -> list[SkillMatchCandidate]:
-    semantic = [SkillMatchCandidate(skill=skill, confidence=score, method="SEMANTIC") for skill, score in semantic_hits]
-    candidates = ([fuzzy] if fuzzy is not None else []) + semantic
-    # Dedup by skill_id, keeping the highest-confidence method's result.
-    best_by_skill: dict[str, SkillMatchCandidate] = {}
-    for c in candidates:
-        existing = best_by_skill.get(c.skill.skill_id)
-        if existing is None or c.confidence > existing.confidence:
-            best_by_skill[c.skill.skill_id] = c
-    return sorted(best_by_skill.values(), key=lambda c: c.confidence, reverse=True)
-
-
-def _match_local(text: str, exact_map: dict, alias_map: dict, fuzzy_universe: dict) -> tuple[list[SkillMatchCandidate] | None, SkillMatchCandidate | None]:
-    """The fast, no-I/O part of matching (plausibility filter + exact/alias/
-    fuzzy). Returns (resolved_result, fuzzy_candidate): resolved_result is
-    non-None when matching is already done (implausible/exact/alias/high-
-    confidence-fuzzy) and no semantic lookup is needed; otherwise it's None
-    and fuzzy_candidate (possibly None itself) still needs to be combined
-    with a semantic lookup by the caller."""
-    if not is_plausible_skill_candidate(text):
-        return [], None
-
-    exact_or_alias = match_exact_and_alias(text, exact_map, alias_map)
-    if exact_or_alias is not None:
-        return [exact_or_alias], None
-
-    fuzzy = match_fuzzy(text, fuzzy_universe)
-    if fuzzy is not None and fuzzy.confidence >= HIGH_CONFIDENCE_THRESHOLD:
-        return [fuzzy], None
-
-    return None, fuzzy
-
-
 async def find_candidates(
     db: Session,
     text: str,
@@ -128,55 +93,32 @@ async def find_candidates(
     recognized technical skill" -- callers must not fabricate a skill in that
     case. Pass pre-built exact_map/alias_map/fuzzy_universe (from
     _catalog_lookup_maps) when matching many candidates in one pass to avoid
-    rebuilding the catalog lookup per candidate. For matching many texts at
-    once, prefer find_candidates_batch -- it shares this exact same per-text
-    logic but embeds every text needing semantic fallback in one request."""
+    rebuilding the catalog lookup per candidate."""
+    if not is_plausible_skill_candidate(text):
+        return []
+
     if exact_map is None or alias_map is None or fuzzy_universe is None:
         exact_map, alias_map, fuzzy_universe = _catalog_lookup_maps(db)
 
-    resolved, fuzzy = _match_local(text, exact_map, alias_map, fuzzy_universe)
-    if resolved is not None:
-        return resolved
+    exact_or_alias = match_exact_and_alias(text, exact_map, alias_map)
+    if exact_or_alias is not None:
+        return [exact_or_alias]
+
+    fuzzy = match_fuzzy(text, fuzzy_universe)
+    if fuzzy is not None and fuzzy.confidence >= HIGH_CONFIDENCE_THRESHOLD:
+        return [fuzzy]
 
     semantic = await match_semantic(db, text)
-    return _combine_fuzzy_and_semantic(fuzzy, semantic)
 
+    candidates = [c for c in [fuzzy] if c is not None] + semantic
+    # Dedup by skill_id, keeping the highest-confidence method's result.
+    best_by_skill: dict[str, SkillMatchCandidate] = {}
+    for c in candidates:
+        existing = best_by_skill.get(c.skill.skill_id)
+        if existing is None or c.confidence > existing.confidence:
+            best_by_skill[c.skill.skill_id] = c
 
-async def find_candidates_batch(
-    db: Session,
-    texts: list[str],
-    exact_map: dict | None = None,
-    alias_map: dict | None = None,
-    fuzzy_universe: dict | None = None,
-) -> dict[str, list[SkillMatchCandidate]]:
-    """Batched counterpart to find_candidates -- identical per-text matching
-    logic and thresholds (both call the same _match_local/_combine_fuzzy_and_
-    semantic helpers), but every text that needs semantic fallback is
-    embedded in ONE request instead of one round-trip per text. Returns a
-    dict keyed by the original text (duplicates collapse to one entry)."""
-    if exact_map is None or alias_map is None or fuzzy_universe is None:
-        exact_map, alias_map, fuzzy_universe = _catalog_lookup_maps(db)
-
-    results: dict[str, list[SkillMatchCandidate]] = {}
-    fuzzy_by_text: dict[str, SkillMatchCandidate | None] = {}
-    needs_semantic: list[str] = []
-
-    for text in texts:
-        if text in results or text in fuzzy_by_text:
-            continue  # duplicate text already resolved or queued
-        resolved, fuzzy = _match_local(text, exact_map, alias_map, fuzzy_universe)
-        if resolved is not None:
-            results[text] = resolved
-        else:
-            fuzzy_by_text[text] = fuzzy
-            needs_semantic.append(text)
-
-    if needs_semantic:
-        semantic_hits_by_text = await search_skill_candidates_batch(db, needs_semantic)
-        for text in needs_semantic:
-            results[text] = _combine_fuzzy_and_semantic(fuzzy_by_text[text], semantic_hits_by_text.get(text, []))
-
-    return results
+    return sorted(best_by_skill.values(), key=lambda c: c.confidence, reverse=True)
 
 
 def is_confident(candidates: list[SkillMatchCandidate]) -> bool:

@@ -7,17 +7,11 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: RUNPOD_ENDPOINT_URL
-        value: https://ngm10kld7tv8i0-11434.proxy.runpod.net/v1
+        value: https://w5abq0pu3s478s-11434.proxy.runpod.net/v1
       - key: RUNPOD_CHAT_MODEL
         value: qwen2.5:14b
       - key: RUNPOD_EMBEDDING_MODEL
         value: nomic-embed-text
-      - key: SUPABASE_URL
-        value: https://gzwwwjksyrpkspxrcuny.supabase.co
-      - key: SUPABASE_PUBLISHABLE_KEY
-        value: sb_publishable_VYHSrIQiRW0M78Tb-fJW0g_GOR4Ccd3
-      - key: DATABASE_URL
-        sync: false
       - key: STORAGE_DIR
         value: ./storage
       - key: GAP_THRESHOLD_MONTHS

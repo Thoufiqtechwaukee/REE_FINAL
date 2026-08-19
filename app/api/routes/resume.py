@@ -26,16 +26,12 @@ async def upload_resume(file: UploadFile, db: Session = Depends(get_db)):
     if len(pdf_bytes) > _MAX_PDF_BYTES:
         raise HTTPException(status_code=400, detail="PDF exceeds maximum allowed size")
 
+    resume = resume_service.upload_resume(db, file.filename, pdf_bytes)
+
     try:
-        resume = resume_service.upload_resume(db, file.filename, pdf_bytes)
         resume = await resume_service.process_until_skill_verification(db, resume.id)
-    except HTTPException:
-        raise
     except Exception as exc:
-        import logging
-        logging.getLogger("app.api.routes.resume").exception("Upload processing error for file %s", file.filename)
-        stage = getattr(resume, "failed_stage", "upload") if "resume" in locals() and resume else "upload"
-        raise HTTPException(status_code=500, detail=f"Processing failed at stage '{stage}': {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Processing failed at {resume.failed_stage}: {exc}") from exc
 
     skills = list_skills_for_verification(db, resume.id)
     return ResumeUploadResponse(
