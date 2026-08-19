@@ -17,6 +17,20 @@ class Settings(BaseSettings):
 
     database_url: str = "mssql+pyodbc://@localhost/REEFinalDB?driver=ODBC+Driver+17+for+SQL+Server&trusted_connection=yes"
 
+    @property
+    def db_url(self) -> str:
+        url = self.database_url.strip()
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[11:]
+        if url.startswith("postgresql://") and "sslmode" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}sslmode=require"
+        if url.startswith("mssql+pyodbc"):
+            import sys
+            if sys.platform != "win32":
+                return f"sqlite:///{(self.storage_path / 'ree_final.db').as_posix()}"
+        return url
+
     storage_dir: str = "./storage"
     gap_threshold_months: int = 6
 
