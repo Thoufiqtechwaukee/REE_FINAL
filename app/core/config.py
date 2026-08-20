@@ -56,12 +56,12 @@ class Settings(BaseSettings):
 
     @property
     def chat_completions_url(self) -> str:
-        base = self.runpod_endpoint_url.rstrip("/")
+        base = self.runpod_endpoint_url.strip().rstrip("/")
         return f"{base}/chat/completions"
 
     @property
     def embeddings_url(self) -> str:
-        base = self.runpod_endpoint_url.rstrip("/")
+        base = self.runpod_endpoint_url.strip().rstrip("/")
         return f"{base}/embeddings"
 
 
