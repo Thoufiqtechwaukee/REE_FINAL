@@ -3,6 +3,8 @@ const state = {
   skills: [],
 };
 
+const API_BASE = window.API_BASE_URL || "";
+
 const $ = (id) => document.getElementById(id);
 
 function showSection(id) {
@@ -67,7 +69,7 @@ async function startAnalysis() {
   formData.append("file", selectedFile);
 
   try {
-    const resp = await fetch("/api/resumes/upload", { method: "POST", body: formData });
+    const resp = await fetch(`${API_BASE}/api/resumes/upload`, { method: "POST", body: formData });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ detail: resp.statusText }));
       throw new Error(err.detail || "Upload failed");
@@ -150,13 +152,13 @@ function updateFreezeButtonLabel() {
 }
 
 async function confirmSkill(id) {
-  const resp = await fetch(`/api/resumes/${state.resumeId}/skills/${id}/confirm`, { method: "POST" });
+  const resp = await fetch(`${API_BASE}/api/resumes/${state.resumeId}/skills/${id}/confirm`, { method: "POST" });
   const updated = await resp.json();
   applySkillUpdate(updated);
 }
 
 async function removeSkill(id) {
-  const resp = await fetch(`/api/resumes/${state.resumeId}/skills/${id}/remove`, { method: "POST" });
+  const resp = await fetch(`${API_BASE}/api/resumes/${state.resumeId}/skills/${id}/remove`, { method: "POST" });
   const updated = await resp.json();
   applySkillUpdate(updated);
 }
@@ -171,7 +173,7 @@ function searchCatalog(id, query) {
   clearTimeout(searchDebounce);
   if (!query || query.trim().length < 2) return;
   searchDebounce = setTimeout(async () => {
-    const resp = await fetch(`/api/resumes/${state.resumeId}/skills/catalog-search?q=${encodeURIComponent(query)}`);
+    const resp = await fetch(`${API_BASE}/api/resumes/${state.resumeId}/skills/catalog-search?q=${encodeURIComponent(query)}`);
     const options = await resp.json();
     const container = document.querySelector(`#correct-panel-${id} .correct-results`);
     container.innerHTML = options
@@ -181,7 +183,7 @@ function searchCatalog(id, query) {
 }
 
 async function applyCorrection(id, newSkillId) {
-  const resp = await fetch(`/api/resumes/${state.resumeId}/skills/${id}/correct`, {
+  const resp = await fetch(`${API_BASE}/api/resumes/${state.resumeId}/skills/${id}/correct`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ new_skill_id: newSkillId }),
@@ -197,7 +199,7 @@ function applySkillUpdate(updated) {
 }
 
 $("freezeSkillsBtn").addEventListener("click", async () => {
-  const resp = await fetch(`/api/resumes/${state.resumeId}/skills/freeze`, { method: "POST" });
+  const resp = await fetch(`${API_BASE}/api/resumes/${state.resumeId}/skills/freeze`, { method: "POST" });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
     alert("Could not start evaluation: " + err.detail);
@@ -211,7 +213,7 @@ $("freezeSkillsBtn").addEventListener("click", async () => {
 
 async function runEvaluation() {
   try {
-    const resp = await fetch(`/api/resumes/${state.resumeId}/evaluation`, { method: "POST" });
+    const resp = await fetch(`${API_BASE}/api/resumes/${state.resumeId}/evaluation`, { method: "POST" });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ detail: resp.statusText }));
       throw new Error(err.detail || "Evaluation failed");
